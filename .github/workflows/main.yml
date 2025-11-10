@@ -21,7 +21,7 @@ jobs:
       - name: Download Android-x86 ISO and Create Virtual Disk
         run: |
           # tải ISO Android-x86 9.0 r2 (link trực tiếp tương đương từ mirror)
-          sudo aria2c -s16 -x16 -o android.iso https://mirror.math.princeton.edu/pub/android-x86/9.0-r2/android-x86_64-9.0-r2-k49.iso
+          sudo aria2c -s16 -x16 -o android.iso https://www.fosshub.com/Android-x86.html?dwl=android-x86_64-9.0-r2-k49.iso#
 
           # tạo ổ cứng ảo để cài Android (tránh lỗi No bootable device)
           sudo qemu-img create -f qcow2 /mnt/android_disk.qcow2 70G
