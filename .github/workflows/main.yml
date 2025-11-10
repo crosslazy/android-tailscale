@@ -1,4 +1,4 @@
-name: Android 
+name: Android VM
 
 on: 
   workflow_dispatch:
@@ -9,96 +9,37 @@ jobs:
     timeout-minutes: 350
     
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Getting Updates and Installing Packages
+      - name: Setup Environment
         run: |
           sudo apt update -y
-          sudo apt install wget lxde qemu-kvm websockify novnc tigervnc-standalone-server -y
-          sudo mkdir -p /root/.vnc
-          sudo wget -O /root/.vnc/xstartup https://raw.githubusercontent.com/Efebey2903/android-tailscale/main/xstartup
-          sudo chmod +x /root/.vnc/xstartup
+          sudo apt install wget qemu-kvm websockify novnc tigervnc-standalone-server -y
           sudo curl -fsSL https://tailscale.com/install.sh | sh
-          sudo tailscale up --authkey=tskey-auth-xxxxxxxxx --ssh
 
-      - name: Download Android x86 64-bit ISO
+      - name: Download Android
         run: |
-          echo "🔄 Tải Android-x86 64-bit (9.0-r2-k49)..."
           sudo aria2c -s16 -x16 -o android.iso "https://www.fosshub.com/Android-x86.html?dwl=android-x86_64-9.0-r2-k49.iso#"
-          
-          # Kiểm tra file
-          if [ -f android.iso ]; then
-            echo "✅ Download thành công!"
-            ls -lh android.iso
-          else
-            echo "❌ Download thất bại!"
-            exit 1
-          fi
 
-      - name: Create Virtual Disk
+      - name: Start VNC Services
         run: |
-          sudo mkdir -p /mnt
-          # Tạo disk 25GB cho Android
-          sudo qemu-img create -f qcow2 /mnt/android_disk.qcow2 25G
-          echo "✅ Đã tạo virtual disk 25GB"
+          sudo vncserver -geometry 1024x768 -SecurityTypes None :1
+          websockify --web /usr/share/novnc/ 6080 localhost:5901 &
+          sleep 5
 
-      - name: Setup VNC
+      - name: Start Android VM
         run: |
-          sudo pkill Xtigervnc || true
-          sleep 2
-          sudo vncserver -geometry 1024x768 -SecurityTypes None -rfbport 5900 :0
-          sleep 3
-          websockify --web /usr/share/novnc/ 6080 localhost:5900 &
-          sleep 3
-
-      - name: Start Android VM with Proper Boot
-        run: |
-          echo "🚀 Khởi động Android VM với cấu hình boot đặc biệt..."
-          
           sudo qemu-system-x86_64 \
-            -machine q35 \
-            -m 4G \
-            -cpu host \
-            -smp cores=2 \
-            -drive file=/mnt/android_disk.qcow2,if=virtio,format=qcow2 \
+            -machine q35 -m 4G -cpu host -smp 2 \
+            -drive file=/mnt/a.img,if=virtio,format=raw \
             -cdrom android.iso \
-            -device virtio-vga \
-            -vnc :0 \
-            -usb \
-            -device usb-tablet \
+            -device virtio-vga -vnc :1 \
+            -usb -device usb-tablet \
             -netdev user,id=net0,hostfwd=tcp::5555-:5555 \
             -device virtio-net-pci,netdev=net0 \
-            -accel kvm \
-            -boot d \
-            -no-reboot \
-            -serial stdio &
-          
-          echo "⏳ Đợi Android boot... (2 phút)"
-          sleep 120
-
-      - name: Display Instructions
-        run: |
-          echo " "
-          echo "🎉 ANDROID-X86 ĐANG KHỞI ĐỘNG!"
-          echo "================================"
-          echo "🌐 Truy cập: http://localhost:6080/vnc.html"
-          echo "🔌 VNC: localhost:5900" 
-          echo "📱 ADB: localhost:5555"
-          echo " "
-          echo "📋 KHI THẤY MÀN HÌNH BOOT:"
-          echo "1. Chọn dòng đầu: 'Android-x86 9.0-r2'"
-          echo "2. Hoặc chọn: 'Advanced options' → 'Android-x86 9.0-r2 (debug mode)'"
-          echo "3. Chờ hệ thống boot vào Android"
-          echo "4. Nếu hỏi cài đặt, chọn 'Live CD - Run without installation'"
-          echo "5. Hoặc cài đặt vào disk nếu muốn dùng lâu dài"
-          echo " "
-          echo "⚡ Thông tin phiên bản:"
-          echo "- Android-x86 9.0-r2-k49 (64-bit)"
-          echo "- Kernel 4.9"
-          echo "- Size: 919MB"
-          echo " "
+            -accel kvm -boot d &
 
       - name: Keep Alive
         run: |
-          sleep 20880
+          echo "✅ Hệ thống đã sẵn sàng!"
+          echo "🔗 URL: http://localhost:6080/vnc.html"
+          # Giữ workflow chạy
+          sleep 21000
