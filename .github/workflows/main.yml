@@ -1,78 +1,29 @@
-name: Android QEMU (4 Cores, 12GB RAM, 400GB Disk)
+name: Android 
 
 on: 
   workflow_dispatch:
-
+ 
 jobs:
   android:
     runs-on: ubuntu-22.04
-    timeout-minutes: 450
-    
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
 
-      - name: Getting Updates and Installing Packages
+      - name: Getting Updates and Installing Tailscale, QEMU.
         run: |
-          echo "🛠️ Cài đặt các gói cần thiết..."
+          dir /dev/dri/
           sudo apt update -y
-          sudo apt install wget lxde qemu-kvm websockify novnc tigervnc-standalone-server -y
-          
-          sudo mkdir -p /root/.vnc
+          sudo apt install aria2 wget lxde qemu-kvm websockify novnc tigervnc-standalone-server -y
+          sudo mkdir /root/.vnc
           sudo wget -O /root/.vnc/xstartup https://raw.githubusercontent.com/Efebey2903/android-tailscale/main/xstartup
           sudo chmod +x /root/.vnc/xstartup
-
-      - name: Download và Tạo Ổ Đĩa 400GB
+          sudo curl -fsSL https://tailscale.com/install.sh | sh
+          sudo tailscale up --ssh
+      - name: Making Android and Setting Everything Up.
         run: |
-          echo "🔄 Tải Android image gốc..."
-          sudo wget -O android_base.img "https://github.com/back2root/android-x86-releases/releases/download/9.0-r2/android-x86_64-9.0-r2.img"
-
-          echo "📁 Mở rộng ổ đĩa lên 400GB..."
-          sudo qemu-img convert -O qcow2 android_base.img android.qcow2
-          sudo qemu-img resize android.qcow2 400G
-          sudo mv android.qcow2 android.img
-
-      - name: Setup VNC
-        run: |
-          echo "🖥️ Thiết lập môi trường VNC/NoVNC..."
-          sudo pkill Xtigervnc || true
+          sudo aria2c -s16 -x16 -o android.iso https://www.fosshub.com/Android-x86-old.html?dwl=android-x86_64-8.1-r6-k49.iso
+          sudo qemu-img create -f raw /mnt/a.img 70G
+          websockify --web /usr/share/novnc/ --wrap-mode=ignore 6080 localhost:5900 &
           sleep 2
-          sudo vncserver -geometry 1024x768 -SecurityTypes None -rfbport 5900 :0
-          sleep 3
-          websockify --web /usr/share/novnc/ 6080 localhost:5900 &
-          sleep 3
-
-      - name: Run Android from Image
-        run: |
-          echo "🚀 Bắt đầu boot Android với Cấu hình cao..."
+          sudo vncserver -SecurityTypes None
+          sleep 999999999
           
-          sudo qemu-system-x86_64 \
-            -machine q35 \
-            -m 12G \
-            -cpu host \
-            -smp cores=4 \
-            -drive file=android.img,if=virtio,format=qcow2 \
-            -device virtio-vga \
-            -vnc :0 \
-            -usb \
-            -device usb-tablet \
-            -netdev user,id=net0,hostfwd=tcp::5555-:5555 \
-            -device virtio-net-pci,netdev=net0 \
-            -accel kvm &
-          
-          echo "⏳ Chờ Android khởi động... (90 giây)"
-          sleep 90
-
-      - name: Display Connection Info
-        run: |
-          echo " "
-          echo "🎉 ANDROID ĐANG CHẠY! (4 Cores, 12GB RAM, 400GB Disk)"
-          echo "====================="
-          echo "🌐 Truy cập Web VNC (NoVNC): http://localhost:6080/vnc.html"
-          echo "🔌 VNC Client: localhost:5900"
-          echo "📱 ADB Debugging: localhost:5555"
-          echo " "
-          
-      - name: Keep Alive
-        run: |
-          sleep 20880
