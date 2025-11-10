@@ -1,102 +1,50 @@
-name: Android Remote
+name: Android
 
-on: 
+on:
   workflow_dispatch:
- 
+
 jobs:
   android:
     runs-on: ubuntu-22.04
-    timeout-minutes: 350
-    
+
     steps:
-      - name: Setup Environment
+      - name: Getting Updates and Installing Dependencies
         run: |
           sudo apt update -y
-          sudo apt install wget qemu-kvm websockify novnc tigervnc-standalone-server curl -y
-
-      - name: Install and Setup Tailscale
-        run: |
-          curl -fsSL https://tailscale.com/install.sh | sh
-          sudo tailscale up --accept-routes --ssh --accept-dns
-          sleep 10
-          echo "🔗 Tailscale IP: $(tailscale ip -4)"
-
-      - name: Download Android
-        run: |
-          sudo aria2c -s16 -x16 -o android.iso "https://www.fosshub.com/Android-x86.html?dwl=android-x86_64-9.0-r2-k49.iso#"
-
-      - name: Create Virtual Disk
-        run: |
-          sudo mkdir -p /mnt
-          sudo qemu-img create -f qcow2 /mnt/android.qcow2 20G
-
-      - name: Fix VNC Configuration
-        run: |
-          # Sửa file xstartup đơn giản hơn
+          sudo apt install -y aria2 wget lxde qemu-kvm qemu-utils websockify novnc tigervnc-standalone-server curl
           sudo mkdir -p /root/.vnc
-          sudo cat > /root/.vnc/xstartup << 'EOF'
-#!/bin/bash
-export XKL_XMODMAP_DISABLE=1
-export XDG_CURRENT_DESKTOP="LXDE"
-export XDG_MENU_PREFIX="lxde-"
-exec startlxde &
-EOF
+          sudo wget -O /root/.vnc/xstartup https://raw.githubusercontent.com/Efebey2903/android-tailscale/main/xstartup
           sudo chmod +x /root/.vnc/xstartup
-          
-          # Khởi động VNC với cấu hình đơn giản
-          sudo vncserver -geometry 1024x768 -depth 24 -SecurityTypes None :1
-          sleep 5
+          sudo curl -fsSL https://tailscale.com/install.sh | sh
+          sudo tailscale up --ssh
 
-      - name: Start NoVNC
+      - name: Download Android-x86 ISO and Create Virtual Disk
         run: |
-          websockify --web /usr/share/novnc/ 6080 localhost:5901 &
+          # tải ISO Android-x86 9.0 r2 (link trực tiếp tương đương từ mirror)
+          sudo aria2c -s16 -x16 -o android.iso https://mirror.math.princeton.edu/pub/android-x86/9.0-r2/android-x86_64-9.0-r2-k49.iso
+
+          # tạo ổ cứng ảo để cài Android (tránh lỗi No bootable device)
+          sudo qemu-img create -f qcow2 /mnt/android_disk.qcow2 70G
+
+      - name: Launch Android-x86 in QEMU with VNC and noVNC
+        run: |
+          # khởi động noVNC (truy cập qua cổng 6080)
+          websockify --web /usr/share/novnc/ --wrap-mode=ignore 6080 localhost:5900 &
+
           sleep 3
-          echo "✅ VNC services started"
+          sudo vncserver -SecurityTypes None &
 
-      - name: Start Android VM
-        run: |
-          echo "🚀 Starting Android VM..."
+          # chạy Android-x86 qua QEMU
           sudo qemu-system-x86_64 \
-            -machine q35 \
-            -m 3G \
-            -cpu host \
-            -smp cores=2 \
-            -drive file=/mnt/android.qcow2,if=virtio,format=qcow2 \
+            -m 4096 \
+            -smp 2 \
+            -boot d \
             -cdrom android.iso \
-            -device virtio-vga \
-            -vnc :1 \
-            -usb \
-            -device usb-tablet \
-            -netdev user,id=net0,hostfwd=tcp::5555-:5555 \
-            -device virtio-net-pci,netdev=net0 \
-            -accel kvm \
-            -boot d &
-          
-          echo "⏳ Waiting for Android to boot... (120 seconds)"
-          sleep 120
+            -hda /mnt/android_disk.qcow2 \
+            -vga virtio \
+            -display vnc=:0 \
+            -enable-kvm &
 
-      - name: Display Connection Info
-        run: |
-          TAILSCALE_IP=$(tailscale ip -4)
-          echo " "
-          echo "🎉 ANDROID REMOTE READY!"
-          echo "========================"
-          echo "🌐 REMOTE ACCESS:"
-          echo "Web VNC: http://$TAILSCALE_IP:6080/vnc.html"
-          echo "VNC Direct: $TAILSCALE_IP:5901"
-          echo "ADB: $TAILSCALE_IP:5555"
-          echo " "
-          echo "🔧 LOCAL ACCESS:"
-          echo "Web VNC: http://localhost:6080/vnc.html"
-          echo " "
-          echo "📱 Boot Instructions:"
-          echo "1. Wait for Android boot menu"
-          echo "2. Select 'Android-x86 9.0-r2'"
-          echo "3. Choose 'Live CD - Run without installation'"
-          echo " "
-
-      - name: Keep Alive
-        run: |
-          echo "🔄 System running for 5.8 hours..."
-          # Giữ hệ thống sống
-          sleep 20880
+          echo "✅ Android-x86 đang khởi động..."
+          echo "🌐 Mở noVNC tại: http://localhost:6080/vnc.html"
+          sleep infinity
