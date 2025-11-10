@@ -14,27 +14,12 @@ jobs:
           sudo apt update -y
           sudo apt install wget qemu-kvm websockify novnc tigervnc-standalone-server curl -y
 
-      - name: Install and Setup Tailscale (No Auth Key)
+      - name: Install and Setup Tailscale
         run: |
-          # Cài đặt Tailscale
           curl -fsSL https://tailscale.com/install.sh | sh
-          
-          # Khởi động Tailscale không cần auth key (dùng magic DNS)
-          echo "🚀 Starting Tailscale without auth key..."
           sudo tailscale up --accept-routes --ssh --accept-dns
-          
-          # Đợi kết nối
           sleep 10
-          
-          # Hiển thị thông tin kết nối
-          echo "🔗 Tailscale connection info:"
-          tailscale status
-          tailscale ip -4
-          tailscale ip -6
-          
-          # Lấy MagicDNS hostname
-          echo "🌐 MagicDNS hostname:"
-          tailscale status --json | jq -r '.Self.DNSName' || echo "Chưa có MagicDNS, dùng IP trực tiếp"
+          echo "🔗 Tailscale IP: $(tailscale ip -4)"
 
       - name: Download Android
         run: |
@@ -45,18 +30,32 @@ jobs:
           sudo mkdir -p /mnt
           sudo qemu-img create -f qcow2 /mnt/android.qcow2 20G
 
-      - name: Start VNC Services
+      - name: Fix VNC Configuration
         run: |
-          # Khởi động VNC
-          sudo vncserver -geometry 1024x768 -SecurityTypes None :1
-          sleep 3
+          # Sửa file xstartup đơn giản hơn
+          sudo mkdir -p /root/.vnc
+          sudo cat > /root/.vnc/xstartup << 'EOF'
+#!/bin/bash
+export XKL_XMODMAP_DISABLE=1
+export XDG_CURRENT_DESKTOP="LXDE"
+export XDG_MENU_PREFIX="lxde-"
+exec startlxde &
+EOF
+          sudo chmod +x /root/.vnc/xstartup
           
-          # Khởi động NoVNC
+          # Khởi động VNC với cấu hình đơn giản
+          sudo vncserver -geometry 1024x768 -depth 24 -SecurityTypes None :1
+          sleep 5
+
+      - name: Start NoVNC
+        run: |
           websockify --web /usr/share/novnc/ 6080 localhost:5901 &
           sleep 3
+          echo "✅ VNC services started"
 
       - name: Start Android VM
         run: |
+          echo "🚀 Starting Android VM..."
           sudo qemu-system-x86_64 \
             -machine q35 \
             -m 3G \
@@ -73,51 +72,31 @@ jobs:
             -accel kvm \
             -boot d &
           
-          echo "⏳ Đợi Android boot... (60 giây)"
-          sleep 60
+          echo "⏳ Waiting for Android to boot... (120 seconds)"
+          sleep 120
 
       - name: Display Connection Info
         run: |
-          # Lấy thông tin kết nối
           TAILSCALE_IP=$(tailscale ip -4)
-          HOSTNAME=$(hostname)
-          
           echo " "
           echo "🎉 ANDROID REMOTE READY!"
           echo "========================"
-          echo "🌐 CONNECTION METHODS:"
+          echo "🌐 REMOTE ACCESS:"
+          echo "Web VNC: http://$TAILSCALE_IP:6080/vnc.html"
+          echo "VNC Direct: $TAILSCALE_IP:5901"
+          echo "ADB: $TAILSCALE_IP:5555"
           echo " "
-          echo "1️⃣ **Method 1 - MagicDNS (Recommended):**"
-          echo "   Web VNC: http://$HOSTNAME.tailscale:6080/vnc.html"
-          echo "   VNC Direct: $HOSTNAME.tailscale:5901" 
-          echo "   ADB: $HOSTNAME.tailscale:5555"
+          echo "🔧 LOCAL ACCESS:"
+          echo "Web VNC: http://localhost:6080/vnc.html"
           echo " "
-          echo "2️⃣ **Method 2 - Direct IP:**"
-          echo "   Web VNC: http://$TAILSCALE_IP:6080/vnc.html"
-          echo "   VNC Direct: $TAILSCALE_IP:5901"
-          echo "   ADB: $TAILSCALE_IP:5555"
-          echo " "
-          echo "3️⃣ **Method 3 - Local Access:**"
-          echo "   Web VNC: http://localhost:6080/vnc.html"
-          echo "   VNC: localhost:5901"
-          echo "   ADB: localhost:5555"
-          echo " "
-          echo "📱 **HOW TO CONNECT REMOTELY:**"
-          echo "1. Cài Tailscale app trên device của bạn"
-          echo "2. Login bằng cùng tài khoản GitHub"
-          echo "3. Truy cập URL trên từ device đó"
-          echo " "
-          echo "🔗 **Tailscale Status:**"
-          tailscale status
+          echo "📱 Boot Instructions:"
+          echo "1. Wait for Android boot menu"
+          echo "2. Select 'Android-x86 9.0-r2'"
+          echo "3. Choose 'Live CD - Run without installation'"
           echo " "
 
       - name: Keep Alive
         run: |
-          echo "🔄 System is running for 5.8 hours..."
-          echo "📊 Active services monitoring:"
-          
-          # Giữ workflow chạy + hiển thị status
-          for i in {1..208}; do  # 208 intervals of 60 seconds = 20880 seconds
-            echo "$(date): ✅ System alive - Tailscale: $(tailscale status --json | jq -r '.BackendState' 2>/dev/null || echo 'unknown')"
-            sleep 60
-          done
+          echo "🔄 System running for 5.8 hours..."
+          # Giữ hệ thống sống
+          sleep 20880
