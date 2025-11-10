@@ -8,43 +8,97 @@ jobs:
     runs-on: ubuntu-22.04
 
     steps:
-      - name: Getting Updates and Installing Dependencies
+      - name: Install Dependencies (QEMU, noVNC, Expect, Tailscale)
         run: |
           sudo apt update -y
-          sudo apt install -y aria2 wget lxde qemu-kvm qemu-utils websockify novnc tigervnc-standalone-server curl
+          sudo apt install -y aria2 wget curl lxde qemu-kvm qemu-utils websockify novnc tigervnc-standalone-server expect
           sudo mkdir -p /root/.vnc
           sudo wget -O /root/.vnc/xstartup https://raw.githubusercontent.com/Efebey2903/android-tailscale/main/xstartup
           sudo chmod +x /root/.vnc/xstartup
           sudo curl -fsSL https://tailscale.com/install.sh | sh
           sudo tailscale up --ssh
 
-      - name: Download Android-x86 ISO and Create Virtual Disk
+      - name: Download Android-x86 ISO & Create Virtual Disk
         run: |
-          # tải ISO Android-x86 9.0 r2 (link trực tiếp tương đương từ mirror)
+          # Bản Android-x86 9.0-r2-k49 (64-bit)
           sudo aria2c -s16 -x16 -o android.iso https://www.fosshub.com/Android-x86.html?dwl=android-x86_64-9.0-r2-k49.iso#
-
-          # tạo ổ cứng ảo để cài Android (tránh lỗi No bootable device)
+          # Tạo ổ đĩa ảo để cài Android vào
           sudo qemu-img create -f qcow2 /mnt/android_disk.qcow2 70G
 
-      - name: Launch Android-x86 in QEMU with VNC and noVNC
+      - name: Auto Install Android-x86 via QEMU
         run: |
-          # khởi động noVNC (truy cập qua cổng 6080)
-          websockify --web /usr/share/novnc/ --wrap-mode=ignore 6080 localhost:5900 &
+          # Khởi chạy QEMU headless + auto cài bằng expect
+          cat > /tmp/install-android.expect <<'EOF'
+          #!/usr/bin/expect -f
+          set timeout 3000
+          spawn sudo qemu-system-x86_64 -m 4096 -smp 2 \
+            -boot d -cdrom android.iso -hda /mnt/android_disk.qcow2 \
+            -vga virtio -nographic -enable-kvm
 
+          # đợi menu khởi động ISO
+          expect {
+            "Live CD - Run Android-x86 without installation" { send "\033[B\r" }  # xuống "Installation"
+            "Installation" { send "\r" }
+          }
+
+          # đợi menu phân vùng
+          expect "Select * Create/Modify partitions" { send "\r" }
+          sleep 5
+
+          # tạo phân vùng mới
+          send "c\r"
+          send "n\r"
+          send "p\r"
+          send "\r"
+          send "\r"
+          send "w\r"
+          sleep 3
+
+          # chọn phân vùng vừa tạo
+          expect "Select partition to install Android-x86" { send "\r" }
+          sleep 3
+
+          # định dạng ext4
+          expect "Choose filesystem to format" { send "\033[B\033[B\r" }
+          sleep 3
+
+          # xác nhận format
+          expect "Do you want to format" { send "yes\r" }
+          sleep 3
+
+          # chọn cài GRUB
+          expect "Do you want to install boot loader GRUB" { send "yes\r" }
+          sleep 3
+
+          # xác nhận make system directory writable
+          expect "Do you want to make system directory writable" { send "yes\r" }
+
+          # đợi hoàn tất
+          expect "Installation finished" { send "\r" }
+          sleep 10
+          send "\r"
+          EOF
+
+          chmod +x /tmp/install-android.expect
+          /tmp/install-android.expect
+
+      - name: Launch Installed Android-x86 with VNC/noVNC
+        run: |
+          # Chạy noVNC server để xem Android
+          websockify --web /usr/share/novnc/ --wrap-mode=ignore 6080 localhost:5900 &
           sleep 3
           sudo vncserver -SecurityTypes None &
 
-          # chạy Android-x86 qua QEMU
+          # Boot Android từ ổ đĩa (đã cài)
           sudo qemu-system-x86_64 \
             -m 4096 \
             -smp 2 \
-            -boot d \
-            -cdrom android.iso \
+            -boot c \
             -hda /mnt/android_disk.qcow2 \
             -vga virtio \
             -display vnc=:0 \
             -enable-kvm &
 
-          echo "✅ Android-x86 đang khởi động..."
-          echo "🌐 Mở noVNC tại: http://localhost:6080/vnc.html"
+          echo "✅ Android-x86 đã cài xong và đang chạy!"
+          echo "🌐 Mở VNC web tại: http://localhost:6080/vnc.html"
           sleep infinity
