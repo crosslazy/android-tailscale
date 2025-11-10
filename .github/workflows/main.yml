@@ -1,69 +1,111 @@
-name: Android-x86 + Tailscale (Headless QEMU)
+name: Android-x86 + Auto Install + Tailscale
 
 on:
   workflow_dispatch:
 
 jobs:
-  run-android:
+  android:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Install dependencies
+      - name: Cập nhật hệ thống và cài công cụ cần thiết
         run: |
+          sudo apt update -y
+          sudo apt install -y qemu-system-x86 expect aria2 curl gnupg
+
+      - name: Cài đặt Tailscale (fix cho Ubuntu 24.04 Noble)
+        run: |
+          curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/jammy.noarmor.gpg | sudo tee /usr/share/keyrings/tailscale-archive-keyring.gpg >/dev/null
+          curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/jammy.tailscale-keyring.list | sudo tee /etc/apt/sources.list.d/tailscale.list >/dev/null
           sudo apt update
-          sudo apt install -y qemu-system-x86 aria2 expect tailscale
-
-      - name: Start Tailscale
-        run: |
+          sudo apt install -y tailscale
           sudo systemctl enable --now tailscaled
           sudo tailscale up --authkey=${{ secrets.TS_KEY }} --hostname=android-x86
-          sudo tailscale status
 
-      - name: Download Android-x86 ISO & Create Disk
+      - name: Tải ISO Android-x86 9.0 r2 (k49)
         run: |
-          # Tạo thư mục mount
-          sudo mkdir -p /mnt
-
-          # Tải file ISO (mirror chính thức, tốc độ cao)
-          sudo aria2c -s16 -x16 -d /mnt -o android.iso \
+          sudo mkdir -p /mnt/android
+          sudo aria2c -s16 -x16 -d /mnt/android -o android.iso \
             "https://www.fosshub.com/Android-x86.html?dwl=android-x86_64-9.0-r2-k49.iso#"
+          ls -lh /mnt/android/android.iso
 
-          # Kiểm tra ISO tồn tại
-          ls -lh /mnt/android.iso
-
-          # Tạo ổ cứng ảo
-          sudo qemu-img create -f qcow2 /mnt/android_disk.qcow2 70G
-          ls -lh /mnt/android_disk.qcow2
-
-      - name: Auto-install Android-x86 in QEMU (Headless)
+      - name: Tạo ổ đĩa ảo cho Android
         run: |
-          # Tạo script expect để tự động cài đặt Android
-          cat > /mnt/install-android.exp <<'EOF'
+          sudo qemu-img create -f qcow2 /mnt/android/android_disk.qcow2 70G
+          ls -lh /mnt/android/android_disk.qcow2
+
+      - name: Cài đặt Android-x86 tự động (không GUI)
+        run: |
+          cat > /mnt/android/auto_install.exp <<'EOF'
           #!/usr/bin/expect -f
           set timeout -1
           spawn sudo qemu-system-x86_64 \
             -m 4096 -smp 2 \
+            -cdrom /mnt/android/android.iso \
+            -hda /mnt/android/android_disk.qcow2 \
             -boot d \
-            -cdrom /mnt/android.iso \
-            -hda /mnt/android_disk.qcow2 \
             -vga virtio \
-            -nographic \
-            -enable-kvm
+            -enable-kvm \
+            -nographic
 
           expect {
             "Android-x86 Live & Installation CD" {
-              send -- "\033\[B"       ;# Chọn "Installation"
+              send -- "\033\[B"   ;# Xuống dòng chọn Installation
               send -- "\r"
             }
           }
+
+          # Đợi menu phân vùng
+          expect "Create/Modify partitions"
+          send -- "\r"
+
+          # Tạo phân vùng mới
+          expect "Command"
+          send -- "n\r"
+          expect "Select"
+          send -- "p\r"
+          expect "Partition number"
+          send -- "1\r"
+          expect "First sector"
+          send -- "\r"
+          expect "Last sector"
+          send -- "\r"
+          expect "Command"
+          send -- "w\r"
+
+          # Xác nhận ghi thay đổi
+          expect "Syncing disks"
+          sleep 2
+          send -- "\r"
+
+          # Format phân vùng ext4
+          expect "Choose partition"
+          send -- "\r"
+          expect "Do you want to format"
+          send -- "yes\r"
+          expect "Select file system"
+          send -- "ext4\r"
+
+          # Cài bootloader GRUB
+          expect "Do you want to install boot loader GRUB"
+          send -- "yes\r"
+          expect "Do you want to install /system directory as read-write"
+          send -- "yes\r"
+
+          sleep 5
+          send -- "\r"
           interact
           EOF
 
-          sudo chmod +x /mnt/install-android.exp
-          sudo /mnt/install-android.exp
+          sudo chmod +x /mnt/android/auto_install.exp
+          sudo /mnt/android/auto_install.exp
 
-      - name: Done
-        run: echo "✅ Android-x86 installed successfully and running via QEMU headless!"
+      - name: Khởi động Android sau khi cài đặt
+        run: |
+          sudo qemu-system-x86_64 \
+            -m 4096 -smp 2 \
+            -hda /mnt/android/android_disk.qcow2 \
+            -boot c \
+            -vga virtio \
+            -enable-kvm \
+            -nographic
