@@ -1,72 +1,69 @@
-name: Android
+name: Android-x86 + Tailscale (Headless QEMU)
 
 on:
   workflow_dispatch:
 
 jobs:
-  android:
-    runs-on: ubuntu-22.04
+  run-android:
+    runs-on: ubuntu-latest
 
     steps:
-      - name: Install Dependencies
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
         run: |
-          sudo apt update -y
-          sudo apt install -y aria2 wget curl qemu-kvm qemu-utils expect lxde novnc websockify tigervnc-standalone-server
-          sudo mkdir -p /root/.vnc
-          sudo wget -O /root/.vnc/xstartup https://raw.githubusercontent.com/Efebey2903/android-tailscale/main/xstartup
-          sudo chmod +x /root/.vnc/xstartup
-          sudo curl -fsSL https://tailscale.com/install.sh | sh
-          sudo tailscale up --ssh
+          sudo apt update
+          sudo apt install -y qemu-system-x86 aria2 expect tailscale
+
+      - name: Start Tailscale
+        run: |
+          sudo systemctl enable --now tailscaled
+          sudo tailscale up --authkey=${{ secrets.TS_KEY }} --hostname=android-x86
+          sudo tailscale status
 
       - name: Download Android-x86 ISO & Create Disk
         run: |
-          # Tải file ISO (mirror OSDN hợp lệ)
-          sudo aria2c -s16 -x16 -o /mnt/android.iso https://www.fosshub.com/Android-x86.html?dwl=android-x86_64-9.0-r2-k49.iso#
+          # Tạo thư mục mount
+          sudo mkdir -p /mnt
+
+          # Tải file ISO (mirror chính thức, tốc độ cao)
+          sudo aria2c -s16 -x16 -d /mnt -o android.iso \
+            "https://www.fosshub.com/Android-x86.html?dwl=android-x86_64-9.0-r2-k49.iso#"
 
           # Kiểm tra ISO tồn tại
           ls -lh /mnt/android.iso
 
-          # Tạo ổ cứng ảo để cài Android
+          # Tạo ổ cứng ảo
           sudo qemu-img create -f qcow2 /mnt/android_disk.qcow2 70G
           ls -lh /mnt/android_disk.qcow2
 
-      - name: Auto Install Android-x86 with Expect
+      - name: Auto-install Android-x86 in QEMU (Headless)
         run: |
-          cat > /tmp/install-android.expect <<'EOF'
+          # Tạo script expect để tự động cài đặt Android
+          cat > /mnt/install-android.exp <<'EOF'
           #!/usr/bin/expect -f
-          set timeout 3000
-          spawn sudo qemu-system-x86_64 -m 4096 -smp 2 \
-            -boot d -cdrom /mnt/android.iso -hda /mnt/android_disk.qcow2 \
-            -vga virtio -nographic -enable-kvm
-
-          # đợi menu khởi động ISO
-          expect {
-            "Live CD - Run Android-x86 without installation" { send "\033[B\r" }
-            "Installation" { send "\r" }
-          }
-          sleep 5
-          send "\r"
-          sleep 120
-          EOF
-
-          chmod +x /tmp/install-android.expect
-          /tmp/install-android.expect
-
-      - name: Launch Installed Android-x86 with VNC/noVNC
-        run: |
-          websockify --web /usr/share/novnc/ --wrap-mode=ignore 6080 localhost:5900 &
-          sleep 3
-          sudo vncserver -SecurityTypes None &
-
-          sudo qemu-system-x86_64 \
-            -m 4096 \
-            -smp 2 \
-            -boot c \
+          set timeout -1
+          spawn sudo qemu-system-x86_64 \
+            -m 4096 -smp 2 \
+            -boot d \
+            -cdrom /mnt/android.iso \
             -hda /mnt/android_disk.qcow2 \
             -vga virtio \
-            -display vnc=:0 \
-            -enable-kvm &
+            -nographic \
+            -enable-kvm
 
-          echo "✅ Android-x86 đang chạy!"
-          echo "🌐 Mở http://localhost:6080/vnc.html để xem giao diện"
-          sleep infinity
+          expect {
+            "Android-x86 Live & Installation CD" {
+              send -- "\033\[B"       ;# Chọn "Installation"
+              send -- "\r"
+            }
+          }
+          interact
+          EOF
+
+          sudo chmod +x /mnt/install-android.exp
+          sudo /mnt/install-android.exp
+
+      - name: Done
+        run: echo "✅ Android-x86 installed successfully and running via QEMU headless!"
