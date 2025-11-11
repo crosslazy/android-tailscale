@@ -6,7 +6,7 @@ on:
       iso_url:
         description: "Direct ISO URL (Android-x86 64-bit, 9.0 r2 khuyến nghị)"
         required: false
-        default: "https://www.fosshub.com/Android-x86.html?dwl=android-x86_64-9.0-r2-k49.iso#"
+        default: "https://github.com/tmtedu/android-zip/releases/download/v1.0.0/android-x86_64-9.0-r2-k49.iso"
       disk_size_gb:
         description: "Dung lượng đĩa ảo (GB)"
         required: false
