@@ -1,124 +1,29 @@
-name: Android Remote (No Tailscale, Auto Install)
+name: Android 
 
-on:
+on: 
   workflow_dispatch:
-    inputs:
-      iso_url:
-        description: "Direct ISO URL (Android-x86 64-bit, 9.0 r2 khuyến nghị)"
-        required: false
-        default: "https://github.com/tmtedu/android-zip/releases/download/v1.0.0/android-x86_64-9.0-r2-k49.iso"
-      disk_size_gb:
-        description: "Dung lượng đĩa ảo (GB)"
-        required: false
-        default: "20"
-      install_timeout_sec:
-        description: "Thời gian chờ cài đặt tự động (giây)"
-        required: false
-        default: "600"
-
+ 
 jobs:
   android:
     runs-on: ubuntu-22.04
-    timeout-minutes: 350
-    env:
-      ISO_URL: ${{ github.event.inputs.iso_url }}
-      DISK_SIZE_GB: ${{ github.event.inputs.disk_size_gb }}
-      INSTALL_TIMEOUT_SEC: ${{ github.event.inputs.install_timeout_sec }}
     steps:
-      - name: Setup environment
-        run: |
-          set -euxo pipefail
-          sudo apt-get update -y
-          sudo apt-get install -y \
-            curl wget jq aria2 xz-utils \
-            qemu-system-x86 qemu-utils \
-            novnc websockify \
-            genisoimage p7zip-full
-          curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb -o /tmp/cloudflared.deb
-          sudo dpkg -i /tmp/cloudflared.deb || sudo apt-get -f install -y
-          cloudflared --version
 
-      - name: Download Android-x86 ISO
+      - name: Getting Updates and Installing Tailscale, QEMU.
         run: |
-          aria2c -s16 -x16 -o android.iso "${ISO_URL}"
-          ls -lh android.iso
-
-      - name: Create virtual disk
+          dir /dev/dri/
+          sudo apt update -y
+          sudo apt install aria2 wget lxde qemu-kvm websockify novnc tigervnc-standalone-server -y
+          sudo mkdir /root/.vnc
+          sudo wget -O /root/.vnc/xstartup https://raw.githubusercontent.com/Efebey2903/android-tailscale/main/xstartup
+          sudo chmod +x /root/.vnc/xstartup
+          sudo curl -fsSL https://tailscale.com/install.sh | sh
+          sudo tailscale up --ssh
+      - name: Making Android and Setting Everything Up.
         run: |
-          sudo mkdir -p /mnt
-          sudo qemu-img create -f qcow2 /mnt/android.qcow2 "${DISK_SIZE_GB}G"
-
-      - name: Extract kernel/initrd from ISO
-        run: |
-          mkdir -p mnt_iso
-          sudo mount -o loop android.iso mnt_iso
-          cp mnt_iso/kernel ./kernel
-          cp mnt_iso/initrd.img ./initrd.img
-          sudo umount mnt_iso
-
-      - name: Start NoVNC (proxy -> QEMU VNC :2 -> 5902)
-        run: |
-          nohup websockify --web /usr/share/novnc/ 6080 localhost:5902 >/tmp/websockify.log 2>&1 &
-
-      - name: Open Cloudflare Quick Tunnel (NoVNC)
-        id: cftunnel
-        run: |
-          nohup cloudflared tunnel --url http://localhost:6080 --no-autoupdate >/tmp/cloudflared.log 2>&1 &
-          for i in $(seq 1 40); do
-            if grep -Eo 'https://[-a-z0-9]+\.trycloudflare\.com' /tmp/cloudflared.log | tail -n1 > /tmp/cf_url; then
-              if [ -s /tmp/cf_url ]; then break; fi
-            fi
-            sleep 1
-          done
-          echo "CF_URL=$(cat /tmp/cf_url 2>/dev/null || true)" | tee -a $GITHUB_OUTPUT
-
-      - name: Unattended Android-x86 Installation
-        run: |
-          nohup sudo qemu-system-x86_64 \
-            -machine q35 \
-            -m 3072 \
-            -smp 2 \
-            -cpu max \
-            -drive file=/mnt/android.qcow2,if=virtio,format=qcow2 \
-            -kernel ./kernel \
-            -initrd ./initrd.img \
-            -append "AUTO_INSTALL=1 DEBUG=2" \
-            -device virtio-vga \
-            -vnc :2 \
-            -usb -device usb-tablet \
-            -netdev user,id=net0 \
-            -device virtio-net-pci,netdev=net0 \
-            -accel tcg >/tmp/qemu_install.log 2>&1 &
-          sleep "${INSTALL_TIMEOUT_SEC}" || true
-          pkill -f "qemu-system-x86_64" || true
-
-      - name: Boot Android from disk
-        run: |
-          nohup sudo qemu-system-x86_64 \
-            -machine q35 \
-            -m 3072 \
-            -smp 2 \
-            -cpu max \
-            -drive file=/mnt/android.qcow2,if=virtio,format=qcow2 \
-            -device virtio-vga \
-            -vnc :2 \
-            -usb -device usb-tablet \
-            -netdev user,id=net0,hostfwd=tcp::5555-:5555 \
-            -device virtio-net-pci,netdev=net0 \
-            -accel tcg >/tmp/qemu_run.log 2>&1 &
-          sleep 120
-
-      - name: Show connection info
-        run: |
-          CF_URL="$(grep -Eo 'https://[-a-z0-9]+\.trycloudflare\.com' /tmp/cloudflared.log | tail -n1 || echo 'N/A')"
-          echo "🎉 ANDROID REMOTE READY"
-          echo "🌐 NoVNC: ${CF_URL}/vnc.html"
-          echo "🖥  ADB (local only): localhost:5555"
-
-      - name: Keep alive (~5.8h)
-        run: |
-          echo "🔄 Keeping job alive so you can connect via Cloudflare URL..."
-          for i in $(seq 1 208); do
-            echo "$(date -u) | alive"
-            sleep 60
-          done
+          sudo aria2c -s16 -x16 -o android.iso https://github.com/tmtedu/android-zip/releases/download/v1.0.0/android-x86_64-9.0-r2-k49.iso
+          sudo qemu-img create -f raw /mnt/a.img 70G
+          websockify --web /usr/share/novnc/ --wrap-mode=ignore 6080 localhost:5900 &
+          sleep 2
+          sudo vncserver -SecurityTypes None
+          sleep 999999999
+          
