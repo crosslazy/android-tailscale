@@ -20,7 +20,7 @@ jobs:
           sudo tailscale up --ssh
       - name: Making Android and Setting Everything Up.
         run: |
-          sudo aria2c -s16 -x16 -o android.iso https://github.com/tmtedu/android-zip/releases/download/v1.0.0/android-x86_64-9.0-r2-k49.iso
+          sudo aria2c -s16 -x16 -o android.iso https://github.com/tmtedu/ANDROID-NEW/releases/download/v1.1.0/android-x86_64-9.0-r2.iso
           sudo qemu-img create -f raw /mnt/a.img 70G
           websockify --web /usr/share/novnc/ --wrap-mode=ignore 6080 localhost:5900 &
           sleep 2
